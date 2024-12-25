@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-import json
+from __future__ import print_function, unicode_literals, absolute_import, division
+
 from datetime import datetime
 
-from peewee import CharField, IntegerField, DateTimeField, BooleanField, TextField
+from peewee import CharField, IntegerField, DateTimeField, BooleanField, AutoField
 
+from domain_admin.enums.ssl_type_enum import SSLTypeEnum
 from domain_admin.model.base_model import BaseModel
-from domain_admin.model.group_model import GroupModel
-from domain_admin.utils import datetime_util
+from domain_admin.utils import datetime_util, time_util
 
 
 class DomainModel(BaseModel):
     """域名"""
-    id = IntegerField(primary_key=True)
+    id = AutoField(primary_key=True)
 
     # 用户id
     user_id = IntegerField(default=0)
@@ -19,66 +20,52 @@ class DomainModel(BaseModel):
     # 域名
     domain = CharField()
 
+    # 顶级域名 @since 1.4.0
+    root_domain = CharField(default='')
+
+    # 端口 @since v1.2.24
+    port = IntegerField(default=443)
+
     # 别名/备注
     alias = CharField(default="")
-
-    # ip
-    ip = CharField(default="")
-
-    # ip信息检查时间 @since 1.2.12
-    ip_check_time = DateTimeField(default=None, null=True)
-
-    # 域名信息自动更新 @since v1.2.13
-    ip_auto_update = BooleanField(default=True)
 
     # 分组
     group_id = IntegerField(default=0, null=False)
 
-    # 域名注册时间 @since 1.1.0
-    domain_start_time = DateTimeField(default=None, null=True)
-
-    # 域名过期时间 @since 1.1.0
-    domain_expire_time = DateTimeField(default=None, null=True)
-
-    # 域名过期剩余天数，仅用于排序 @since 1.1.0
-    domain_expire_days = IntegerField(default=0, null=False)
-
-    # 域名信息检查时间 @since 1.2.12
-    domain_check_time = DateTimeField(default=None, null=True)
-
-    # 域名信息自动更新 @since v1.2.13
-    domain_auto_update = BooleanField(default=True)
-
     # SSL签发时间
+    # @since v1.2.24 变更为：过期时间最短那个证书
     start_time = DateTimeField(default=None, null=True)
 
     # SSL过期时间
+    # @since v1.2.24 变更为：过期时间最短那个证书
     expire_time = DateTimeField(default=None, null=True)
 
     # SSL过期剩余天数，仅用于排序
+    # @since v1.2.24 变更为：过期时间最短那个证书
     expire_days = IntegerField(default=0, null=False)
-
-    # 最后检查时间
-    check_time = DateTimeField(default=None, null=True)
 
     # SSL证书信息自动更新 @since v1.2.13
     auto_update = BooleanField(default=True)
 
-    # 连接状态
-    connect_status = BooleanField(default=None, null=True)
-
-    # 有效期总天数
-    total_days = IntegerField(default=0, null=False)
-
-    # 通知状态
-    notify_status = BooleanField(default=True)
-
     # 是否监测 @since 1.0.3
     is_monitor = BooleanField(default=True)
 
-    # 详细信息
-    # @Deprecated
-    detail_raw = TextField(default=None, null=True)
+    # 动态主机 @since 1.4.0
+    # @since 1.5.23 移除动态主机
+    is_dynamic_host = BooleanField(default=False)
+
+    # SSL 加密方式 @since 1.5.23
+    ssl_type = IntegerField(default=SSLTypeEnum.SSL_TLS, null=False)
+
+    # 连接状态
+    # @since v1.2.24 所有ip都连接成功才是成功
+    connect_status = BooleanField(default=None, null=True)
+
+    # SSL有效期总天数，仅用于排序
+    total_days = IntegerField(default=0, null=False)
+
+    # 数据版本号 @since 1.6.3
+    version = IntegerField(default=0, null=False)
 
     # 创建时间
     create_time = DateTimeField(default=datetime.now)
@@ -92,7 +79,7 @@ class DomainModel(BaseModel):
 
         indexes = (
             # 唯一索引
-            (('user_id', 'domain'), True),  # Note the trailing comma!
+            (('user_id', 'domain', 'port'), True),  # Note the trailing comma!
         )
 
     @property
@@ -102,10 +89,6 @@ class DomainModel(BaseModel):
     @property
     def create_time_label(self):
         return datetime_util.format_datetime_label(self.create_time)
-
-    @property
-    def check_time_label(self):
-        return datetime_util.time_for_human(self.check_time)
 
     @property
     def update_time_label(self):
@@ -121,38 +104,75 @@ class DomainModel(BaseModel):
         if self.expire_time and isinstance(self.expire_time, datetime):
             return self.expire_time.strftime('%Y-%m-%d')
 
-    # @property
-    # def total_days(self):
-    #     if self.start_time and self.expire_time:
-    #         return (self.expire_time - self.start_time).days
+    @property
+    def real_time_ssl_total_days(self):
+        """
+        实时ssl总天数
+        :return:
+        @since v1.3.1
+        """
+        return time_util.get_diff_days(self.start_time, self.expire_time)
 
     @property
     def real_time_expire_days(self):
         """
         实时ssl过期剩余天数
         expire_days 是更新数据时所计算的时间，有滞后性
-        :return:
+        :return: int
         """
-        if self.expire_time and isinstance(self.expire_time, datetime):
-            return (self.expire_time - datetime.now()).days
+        return time_util.get_diff_days(datetime.now(), self.expire_time)
+        # if self.expire_time and isinstance(self.expire_time, datetime):
+        #     return (self.expire_time - datetime.now()).days
+
+    # @since v1.3.1
+    real_time_ssl_expire_days = real_time_expire_days
 
     @property
-    def real_time_domain_expire_days(self):
+    def expire_status(self):
         """
-        实时域名过期剩余天数
-        expire_days 是更新数据时所计算的时间，有滞后性
-        @since v1.1.0
-        :return:
+        过期状态
+        7 天以上    健康
+        0 天以上    亚健康
+        0 天及其以下 危险
+        :return: Optional[bool]
         """
-        if self.domain_expire_time and isinstance(self.domain_expire_time, datetime):
-            return (self.domain_expire_time - datetime.now()).days
+        if self.real_time_expire_days > 7:
+            return True
+        elif self.real_time_expire_days > 0:
+            return None
+        else:
+            return False
 
-    @property
-    def detail(self):
-        if self.detail_raw:
-            return json.loads(self.detail_raw)
 
-    @property
-    def group(self):
-        if self.group_id:
-            return GroupModel.get_or_none(GroupModel.id == self.group_id)
+# 数据导入导出字段关系
+FIELD_MAPPING = [
+    {
+        'name': '域名',
+        'field': 'domain',
+    },
+    {
+        'name': '端口',
+        'field': 'port',
+        'default_value': '443',
+    },
+    {
+        'name': '证书颁发时间',
+        'field': 'start_date',
+    },
+    {
+        'name': '证书过期时间',
+        'field': 'expire_date',
+    },
+    {
+        'name': '证书天数',
+        'field': 'real_time_expire_days',
+    },
+    {
+        'name': '分组',
+        'field': 'group_name',
+    },
+    {
+        'name': '备注',
+        'field': 'alias',
+    },
+]
