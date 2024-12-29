@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-import json
+from __future__ import print_function, unicode_literals, absolute_import, division
 from datetime import datetime
-import warnings
-from domain_admin.config import ADMIN_USERNAME
-from domain_admin.model.base_model import BaseModel
-from peewee import CharField, IntegerField, DateTimeField, BooleanField, TextField
 
-from domain_admin.utils import bcrypt_util
+from peewee import CharField, DateTimeField, BooleanField, AutoField, IntegerField
+
+from domain_admin.config import ADMIN_USERNAME, ADMIN_PASSWORD, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_USERNAME
+from domain_admin.enums.role_enum import RoleEnum
+from domain_admin.model.base_model import BaseModel
+from domain_admin.utils import bcrypt_util, datetime_util
 
 
 class UserModel(BaseModel):
     """用户"""
-    id = IntegerField(primary_key=True)
+    id = AutoField(primary_key=True)
 
     # 用户名
     username = CharField(unique=True, null=None)
@@ -22,12 +23,8 @@ class UserModel(BaseModel):
     # 头像
     avatar_url = CharField(null=None, default='')
 
-    # 过期前多少天提醒
-    before_expire_days = IntegerField(null=None, default=3)
-
-    # 邮件列表
-    # Deprecated 已弃用 v0.0.12
-    email_list_raw = TextField(default=None, null=True)
+    # 用户角色
+    role = IntegerField(null=False, default=RoleEnum.USER)
 
     # 账号状态
     status = BooleanField(default=True)
@@ -42,21 +39,27 @@ class UserModel(BaseModel):
         table_name = 'tb_user'
 
     @property
-    def email_list(self):
-        warnings.warn("UserModel field email_list is Deprecated, please use NotifyModel", DeprecationWarning)
-
-        if self.email_list_raw:
-            return json.loads(self.email_list_raw)
+    def is_default_password(self):
+        """
+        管理员是否使用系统给定的默认密码
+        :return:
+        """
+        if self.username != DEFAULT_ADMIN_USERNAME:
+            return False
         else:
-            return []
+            return bcrypt_util.check_password(DEFAULT_ADMIN_PASSWORD, self.password)
+
+    @property
+    def create_time_label(self):
+        return datetime_util.time_for_human(self.create_time)
 
 
 def init_table_data():
     data = [
         {
             'username': ADMIN_USERNAME,
-            'password': bcrypt_util.encode_password('123456'),
-            'before_expire_days': 3,
+            'password': bcrypt_util.encode_password(ADMIN_PASSWORD),
+            'role': RoleEnum.ADMIN
         }
     ]
 
